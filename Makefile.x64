@@ -1,6 +1,7 @@
 # ============================================================================
-# PX68K Makefile for Modern 64-bit Systems (Ultra Compatible)
-# Target: Linux x86_64 - Disables all warnings for legacy code compatibility
+# PX68K Makefile for Modern 64-bit Systems (Fixed Subdirectory Build)
+# Target: Linux x86_64 
+# Fix: Changed suffix rules to pattern rules for subdirectory support
 # ============================================================================
 
 include version.txt
@@ -12,10 +13,9 @@ RM	 = rm -f
 TAGS	 = etags
 DEPEND	 = gccmakedep
 
-# Modern 64-bit architecture flags (empty = native)
 MOPT =
 
-# 终极方案：禁用所有警告 (-w)，老代码在现代 GCC 下警告太多且都是误报
+# Disable all warnings for legacy code
 CDEBUGFLAGS = -O2 -w
 CDEBUGFLAGS += -funroll-loops -fomit-frame-pointer
 CDEBUGFLAGS += -ffast-math -ftree-vectorize
@@ -23,10 +23,6 @@ CDEBUGFLAGS += -DNDEBUG -g
 CDEBUGFLAGS += -DPX68K_VERSION=$(PX68K_VERSION)
 CDEBUGFLAGS += -DNO_MERCURY
 CDEBUGFLAGS += -DC68K_NO_JUMP_TABLE
-
-# ============================================================================
-# SDL2 Configuration
-# ============================================================================
 
 SDL_CONFIG ?= sdl2-config
 SDL_INCLUDE = `$(SDL_CONFIG) --cflags`
@@ -64,21 +60,20 @@ CXXOBJS = \
 
 OBJS = $(COBJS) $(CXXOBJS)
 
-CSRCS = $(COBJS:.o=.c)
-CXXSRCS = $(CXXOBJS:.o=.cpp)
-SRCS = $(CSRCS) $(CXXSRCS)
-
 # ============================================================================
-# Build Rules
+# Build Rules (Fixed for subdirectories)
 # ============================================================================
 
-.SUFFIXES: .c .cpp
-
-.c.o:
+# 关键修复：使用模式规则 (Pattern Rules) 替代后缀规则，支持子目录
+%.o: %.c
 	$(CC) -o $@ $(CFLAGS) -c $<
 
-.cpp.o:
+%.o: %.cpp
 	$(CXX) -o $@ $(CXXFLAGS) -c $<
+
+# 保留汇编规则（如果有 .s 文件）
+%.o: %.s
+	$(CC) -o $@ $(CFLAGS) -c $<
 
 all: px68k
 
@@ -88,11 +83,11 @@ px68k: $(OBJS)
 	@echo "Build complete: ./px68k"
 
 depend:
-	$(DEPEND) -- $(CXXFLAGS) -- $(SRCS)
+	$(DEPEND) -- $(CXXFLAGS) -- $(OBJS:.o=.c) $(CXXOBJS:.o=.cpp)
 
 clean:
 	$(RM) px68k $(OBJS)
-	$(RM) *.CKP *.ln *.BAK *.bak *.o core errs ,* *~ *.a .emacs_* tags TAGS make.log MakeOut "#"*
+	$(RM) *.CKP *.ln *.BAK *.bak core errs ,* *~ *.a .emacs_* tags TAGS make.log MakeOut "#"*
 
 tags:
 	find . -name "*.h" -o -name "*.c" -o -name "*.cpp" | $(TAGS) -
