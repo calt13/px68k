@@ -1,0 +1,181 @@
+name: Build PX68K macOS
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]  # 推送标签时触发，用于发 Release
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:  # 手动触发按钮
+
+env:
+  # 固定 macOS 部署目标，确保兼容性
+  MACOSX_DEPLOYMENT_TARGET: '13.0'
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-13    # GitHub 的 Intel 运行器
+            arch: x86_64
+            runner: macos-13
+          - os: macos-14    # GitHub 的 M1 运行器 (ARM64)
+            arch: arm64
+            runner: macos-14
+    
+    runs-on: ${{ matrix.runner }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive  # 如果有子模块的话
+    
+    - name: Setup Homebrew cache
+      uses: actions/cache@v4
+      id: brew-cache
+      with:
+        path: |
+          ~/Library/Caches/Homebrew
+          /usr/local/Homebrew/Library/Taps  # Intel 路径
+          /opt/homebrew/Library/Taps        # ARM 路径
+        key: ${{ runner.os }}-${{ matrix.arch }}-brew-${{ hashFiles('.github/workflows/build-macos.yml') }}
+        restore-keys: |
+          ${{ runner.os }}-${{ matrix.arch }}-brew-
+    
+    - name: Install dependencies
+      run: |
+        brew update
+        brew install sdl2 sdl2_gfx make pkg-config
+        echo "SDL2 version: $(sdl2-config --version)"
+    
+    - name: Prepare version file
+      run: |
+        # 如果原项目没有 version.txt，创建一个
+        if [ ! -f version.txt ]; then
+          echo "PX68K_VERSION=0.15" > version.txt
+        fi
+    
+    - name: Build (${{ matrix.arch }})
+      run: |
+        # 使用架构特定的 Makefile（或自动检测）
+        make -f Makefile.macos SDL2=1 -j4
+        file px68k  # 验证架构
+    
+    - name: Ad-hoc codesign (解决 Gatekeeper)
+      run: |
+        # GitHub Actions 构建的二进制需要签名才能在 macOS 15 上运行
+        codesign --force --deep --sign - px68k
+    
+    - name: Prepare artifact
+      run: |
+        mkdir -p "PX68K-${{ matrix.arch }}"
+        cp px68k "PX68K-${{ matrix.arch }}/"
+        cp readme.txt "PX68K-${{ matrix.arch }}/" 2>/dev/null || true
+        cp develop.txt "PX68K-${{ matrix.arch }}/" 2>/dev/null || true
+        
+        # 创建启动说明
+        cat > "PX68K-${{ matrix.arch }}/README.txt" << 'EOF'
+        PX68K - Portable X68000 Emulator
+        
+        运行前准备:
+        1. 创建目录: mkdir -p ~/.keropi
+        2. 放入 BIOS ROM 文件到 ~/.keropi/:
+           - iplrom.dat (或 iplromco.dat, iplromxv.dat 等)
+           - cgrom.dat (或 cgrom.tmp)
+        3. 放入游戏镜像到任意目录，通过 F12 菜单选择
+        
+        运行:
+        ./px68k
+        
+        控制:
+        - F12: 菜单
+        - 详见原 readme.txt
+        
+        构建架构: ${{ matrix.arch }}
+        构建时间: $(date)
+        EOF
+        
+        # 打包为 zip (保留可执行权限)
+        zip -r "PX68K-${{ matrix.arch }}.zip" "PX68K-${{ matrix.arch }}/"
+    
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: PX68K-${{ matrix.arch }}
+        path: PX68K-${{ matrix.arch }}.zip
+        retention-days: 30
+
+  # 创建通用二进制 (Universal Binary) - 可选但推荐
+  universal:
+    needs: build
+    runs-on: macos-14  # M1 运行器可以创建通用二进制
+    if: github.event_name != 'pull_request'  # PR 时不构建
+    
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts
+        pattern: PX68K-*
+        merge-multiple: false
+    
+    - name: Create Universal Binary
+      run: |
+        mkdir -p PX68K-Universal/PX68K.app/Contents/MacOS
+        mkdir -p PX68K-Universal/PX68K.app/Contents/Resources
+        
+        # 使用 lipo 合并两个架构
+        lipo -create \
+          artifacts/PX68K-x86_64/PX68K-x86_64/px68k \
+          artifacts/PX68K-arm64/PX68K-arm64/px68k \
+          -output PX68K-Universal/PX68K.app/Contents/MacOS/px68k
+        
+        # 复制其他文件 (从 ARM 版)
+        cp artifacts/PX68K-arm64/PX68K-arm64/readme.txt PX68K-Universal/ 2>/dev/null || true
+        cp artifacts/PX68K-arm64/PX68K-arm64/README.txt PX68K-Universal/ 2>/dev/null || true
+        
+        # 创建简单的 Info.plist (让 macOS 识别为 App，可选)
+        cat > PX68K-Universal/PX68K.app/Contents/Info.plist << 'EOF'
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+            <key>CFBundleExecutable</key>
+            <string>px68k</string>
+            <key>CFBundleIdentifier</key>
+            <string>com.github.px68k</string>
+            <key>CFBundleName</key>
+            <string>PX68K</string>
+            <key>CFBundleVersion</key>
+            <string>1.0</string>
+            <key>LSMinimumSystemVersion</key>
+            <string>13.0</string>
+        </dict>
+        </plist>
+        EOF
+        
+        # 签名
+        codesign --force --deep --sign - PX68K-Universal/PX68K.app/Contents/MacOS/px68k
+        
+        # 打包
+        zip -r PX68K-Universal.zip PX68K-Universal/
+    
+    - name: Upload Universal artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: PX68K-Universal
+        path: PX68K-Universal.zip
+    
+    # 如果是 tag 推送，自动创建 Release
+    - name: Release
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          PX68K-Universal.zip
+          artifacts/PX68K-x86_64/PX68K-x86_64.zip
+          artifacts/PX68K-arm64/PX68K-arm64.zip
+        generate_release_notes: true
