@@ -33,18 +33,17 @@ jobs:
       
       - name: Fix Makefile for 64-bit
         run: |
-          # 1. 移除 -m32（关键：原 Makefile 在非 armv6l 时强制使用 -m32）
+          # 1. 移除 -m32
           sed -i 's/MOPT= -m32/MOPT=/' Makefile
-          
-          # 2. 禁用所有警告避免 GCC 14 阻断
+          # 2. 禁用所有警告
           sed -i 's/-Wall/-w/g' Makefile
-          
-          # 3. 启用 SDL2（原 Makefile 通过 SDL2=1 变量控制）
-          echo "Will build with: make SDL2=1"
+          echo "Makefile fixed for 64-bit build"
       
       - name: Prepare version file
         run: |
-          [ ! -f version.txt ] && echo "PX68K_VERSION=0.15" > version.txt
+          # 使用 || 代替 &&，避免 set -e 问题
+          [ -f version.txt ] || echo "PX68K_VERSION=0.15" > version.txt
+          cat version.txt
       
       - name: Build
         run: make SDL2=1 -j$(nproc)
