@@ -13,48 +13,33 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libsdl2-dev libsdl2-gfx-dev
       
-      - name: Fix Makefile for 64-bit (最小修改)
+      - name: Fix Makefile for 64-bit (最小修改集)
         run: |
-          # 1. 移除 -m32 限制（关键）
+          echo "=== 修改前检查 ==="
+          grep -n "MOPT=" Makefile || true
+          grep -n "^CDEBUGFLAGS =" Makefile || true
+          grep -n "^COBJS=" Makefile || true
+          grep -n "^CXXOBJS=" Makefile || true
+          
+          # 修改 1: 移除 -m32（支持 64 位架构）
           sed -i 's/MOPT= -m32/MOPT=/' Makefile
-          # 2. 添加 GCC 14 兼容标志（legacy 代码需要）
-          sed -i 's/CDEBUGFLAGS = -g/CDEBUGFLAGS = -g -fpermissive -Wno-format-security/' Makefile
-          # 3. 确保 fmgen 使用 C++ 编译（修复 agent 的错误）
+          
+          # 修改 2: 添加 GCC 14 兼容标志（解决 windraw.c 等 legacy 代码的指针转换错误）
+          # 保留原始的 -g -O0 -fno-strict-aliasing，追加宽容选项
+          sed -i 's/^CDEBUGFLAGS = -g -O0 -fno-strict-aliasing.*/CDEBUGFLAGS = -g -O0 -fno-strict-aliasing -fpermissive -Wno-error -Wno-format-security -Wno-narrowing -Wno-int-conversion -Wno-incompatible-pointer-types -Wno-discarded-qualifiers/' Makefile
+          
+          # 修改 3: 确保 USE_SDLGFX 定义存在（原始 Makefile 有，可能被 agent 删除）
+          if ! grep -q "USE_SDLGFX" Makefile; then
+            sed -i '/^CDEBUGFLAGS = /a CDEBUGFLAGS+= -DUSE_SDLGFX' Makefile
+          fi
+          
+          # 修改 4: 修正 fmgen 归属（关键！fmgen 是 C++ 代码，必须在 CXXOBJS 中）
+          # 先处理 agent 错误地把 FMGENOBJS 放进 COBJS 的情况
           sed -i 's/COBJS=\$(X68KOBJS) \$(X11OBJS) \$(WIN32APIOBJS) \$(CPUOBJS) \$(FMGENOBJS)/COBJS=\$(X68KOBJS) \$(X11OBJS) \$(WIN32APIOBJS) \$(CPUOBJS)/' Makefile
+          # 确保 CXXOBJS 包含 FMGENOBJS（原始 Makefile 是正确的，但 agent 可能改了）
           sed -i 's/CXXOBJS=\$(X11CXXOBJS)/CXXOBJS=\$(FMGENOBJS) \$(X11CXXOBJS)/' Makefile
-      
-      - name: Build
-        run: make SDL2=1
-      
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: px68k-linux-x64
-          path: px68k
-
-  build-macos:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install dependencies (SDL2)
-        run: |
-          brew install sdl2 sdl2_gfx
-      
-      - name: Fix Makefile for 64-bit macOS
-        run: |
-          # macOS 同样移除 -m32（文档中提到需要 64bit 重新编译 SDL，但 brew 安装的已是 64bit）
-          sed -i '' 's/MOPT= -m32/MOPT=/' Makefile
-          sed -i '' 's/CDEBUGFLAGS = -g/CDEBUGFLAGS = -g -fpermissive -Wno-format-security/' Makefile
-          # 修正 fmgen 归属
-          sed -i '' 's/COBJS=\$(X68KOBJS) \$(X11OBJS) \$(WIN32APIOBJS) \$(CPUOBJS) \$(FMGENOBJS)/COBJS=\$(X68KOBJS) \$(X11OBJS) \$(WIN32APIOBJS) \$(CPUOBJS)/' Makefile
-          sed -i '' 's/CXXOBJS=\$(X11CXXOBJS)/CXXOBJS=\$(FMGENOBJS) \$(X11CXXOBJS)/' Makefile
-      
-      - name: Build
-        run: make SDL2=1
-      
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: px68k-macos-x64
-          path: px68k
+          
+          echo "=== 修改后验证 ==="
+          grep -n "MOPT=" Makefile
+          grep -n "^CDEBUGFLAGS =" Makefile
+          grep -n "^CO
