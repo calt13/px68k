@@ -1,46 +1,32 @@
-name: Build PX68K
+name: Build PX68K (32-bit legacy)
 
 on: [push, pull_request]
 
 jobs:
-  build-linux:
-    runs-on: ubuntu-latest
+  build-32bit:
+    runs-on: ubuntu-20.04  # 20.04 的 32 位库支持比 22.04 好
     steps:
       - uses: actions/checkout@v4
       
-      - name: Install dependencies
+      - name: Setup 32-bit environment
         run: |
+          sudo dpkg --add-architecture i386
           sudo apt-get update
-          sudo apt-get install -y libsdl2-dev libsdl2-gfx-dev
+          # 32 位编译器和多库支持
+          sudo apt-get install -y gcc-multilib g++-multilib
+          # 32 位 SDL2 开发库（关键！）
+          sudo apt-get install -y libsdl2-dev:i386 libsdl2-gfx-dev:i386
+          # 解决 32 位运行依赖
+          sudo apt-get install -y libc6-dev-i386
       
-      - name: Fix (4行sed)
+      - name: Build (original 32-bit)
         run: |
-          # 1. 修改 windows.h：给 max 宏加上 NOMINMAX 保护
-          sed -i '/#define max(a,b)/i #ifndef NOMINMAX' win32api/windows.h
-          
-          # 2. 修改 windows.h：给 min 宏加上 #endif（闭合上面的 #ifndef）
-          sed -i '/#define min(a,b)/a #endif' win32api/windows.h
-          
-          # 3. Makefile 移除 -m32
-          sed -i 's/MOPT= -m32/MOPT=/' Makefile
-          
-          # 4. Makefile 添加 -DNOMINMAX 和 GCC 14 宽容选项
-          sed -i 's/CDEBUGFLAGS = -g -O0 -fno-strict-aliasing/CDEBUGFLAGS = -g -O0 -fno-strict-aliasing -fpermissive -Wno-error -DNOMINMAX/' Makefile
-      
-      - name: Build
-        run: make SDL2=1
+          # 完全不动 Makefile，保持原始的 -m32
+          make clean || true
+          make SDL2=1
       
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: px68k-linux-x64
-          path: px68k
-   
-      - name: Build
-        run: make SDL2=1
-      
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: px68k-macos-x64
+          name: px68k-32bit-elf
           path: px68k
