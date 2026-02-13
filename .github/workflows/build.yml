@@ -1,0 +1,76 @@
+name: Build PX68K (Original Makefile)
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install dependencies (Ubuntu)
+      run: |
+        sudo apt-get update
+        # 原项目依赖：SDL2 (或 SDL1.2) + SDL2_gfx
+        # develop.txt 提到: Ubuntu Linux 13.04, SDL 1.2, SDL_gfx 1.2-4
+        sudo apt-get install -y libsdl2-dev libsdl2-gfx-dev g++ make
+        
+        # 如果要严格按原项目编译 32位版本，取消下面注释：
+        # sudo apt-get install -y gcc-multilib g++-multilib libsdl2-dev:i386 libsdl2-gfx-dev:i386
+        
+        sdl2-config --version || echo "SDL2 not found via config"
+    
+    - name: Prepare version file
+      run: |
+        if [ ! -f version.txt ]; then
+          echo "PX68K_VERSION=0.15" > version.txt
+        fi
+    
+    - name: Fix Makefile for 64-bit build
+      run: |
+        # 原 Makefile 默认使用 -m32 (32位)，在现代 64位 Ubuntu 上需要移除
+        # 策略：将 MOPT= -m32 改为 MOPT= (空) 以构建 64位版本
+        echo "Original MOPT setting:"
+        grep "^MOPT=" Makefile || grep "MOPT= -m32" Makefile || true
+        
+        # 移除 -m32 标志，允许在 x86_64 上原生构建
+        sed -i 's/^MOPT= -m32$/MOPT=/' Makefile
+        # 或者如果想保留其他 MOPT 内容：sed -i 's/-m32//' Makefile
+        
+        echo "Modified MOPT setting:"
+        grep "^MOPT=" Makefile || true
+    
+    - name: Build (SDL2 mode, as per develop.txt)
+      run: |
+        # develop.txt 指导：$ make SDL2=1
+        make clean || true
+        make SDL2=1 -j$(nproc)
+        
+        # 验证构建结果
+        file px68k
+        ls -lh px68k
+    
+    - name: Test binary execution
+      run: |
+        # 测试是否能运行（会失败因为没 ROM，但能看到帮助或版本信息）
+        ./px68k --help 2>&1 || true
+        echo "Binary architecture check:"
+        file px68k
+    
+    - name: Package
+      run: |
+        mkdir -p px68k-linux
+        cp px68k px68k-linux/
+        cp readme.txt develop.txt px68k-linux/ 2>/dev/null || true
+        tar czvf px68k-linux-x64.tar.gz px68k-linux/
+    
+    - uses: actions/upload-artifact@v4
+      with:
+        name: px68k-linux-x64
+        path: px68k-linux-x64.tar.gz
