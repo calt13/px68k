@@ -1,0 +1,114 @@
+# ============================================================================
+# PX68K Makefile for Modern 64-bit Systems
+# Target: Linux x86_64, macOS x86_64/arm64
+# Based on original Makefile, removed -m32 legacy constraints
+# ============================================================================
+
+include version.txt
+
+CC	 = gcc
+CXX	 = c++
+CXXLINK	 = $(CXX)
+RM	 = rm -f
+TAGS	 = etags
+DEPEND	 = gccmakedep
+
+# Modern 64-bit architecture flags (empty = native)
+MOPT =
+
+# Optimization flags for modern CPUs (removed -m32, -march=pentium-m)
+CDEBUGFLAGS = -O2 -Wall
+CDEBUGFLAGS += -funroll-loops -fomit-frame-pointer
+CDEBUGFLAGS += -ffast-math -ftree-vectorize
+CDEBUGFLAGS += -DNDEBUG -g
+CDEBUGFLAGS += -DPX68K_VERSION=$(PX68K_VERSION)
+
+# Disable legacy 32-bit specific options
+CDEBUGFLAGS += -DNO_MERCURY
+CDEBUGFLAGS += -DC68K_NO_JUMP_TABLE
+
+# Use SDL2 by default (modern standard)
+SDL_CONFIG ?= sdl2-config
+SDL_INCLUDE = `$(SDL_CONFIG) --cflags`
+SDL_LIB = `$(SDL_CONFIG) --libs` -lSDL2_gfx
+
+# Standard math library
+LDLIBS = -lm
+
+# Includes
+EXTRA_INCLUDES = -I./x11 -I./x68k -I./fmgen -I./win32api $(SDL_INCLUDE)
+
+# Combine flags
+CFLAGS = $(MOPT) $(CDEBUGFLAGS) $(EXTRA_INCLUDES)
+CXXFLAGS = $(MOPT) $(CDEBUGFLAGS) $(EXTRA_INCLUDES) -std=c++11
+CXXLDOPTIONS = $(MOPT) $(CDEBUGFLAGS)
+
+# ============================================================================
+# Source Objects (same as original)
+# ============================================================================
+
+COBJS = \
+	x68k/d68k.o x68k/adpcm.o x68k/bg.o x68k/crtc.o x68k/dmac.o \
+	x68k/fdc.o x68k/fdd.o x68k/disk_d88.o x68k/disk_dim.o \
+	x68k/disk_xdf.o x68k/gvram.o x68k/ioc.o x68k/irqh.o \
+	x68k/mem_wrap.o x68k/mercury.o x68k/mfp.o x68k/palette.o \
+	x68k/midi.o x68k/pia.o x68k/rtc.o x68k/sasi.o x68k/scc.o \
+	x68k/scsi.o x68k/sram.o x68k/sysport.o x68k/tvram.o \
+	x11/joystick.o x11/juliet.o x11/keyboard.o x11/mouse.o \
+	x11/prop.o x11/status.o x11/timer.o x11/dswin.o \
+	x11/windraw.o x11/winui.o x11/about.o x11/common.o \
+	win32api/dosio.o win32api/fake.o win32api/peace.o \
+	m68000/m68000.o m68000/c68k/c68k.o m68000/c68k/c68kexec.o
+
+CXXOBJS = \
+	fmgen/fmgen.o fmgen/fmg_wrap.o fmgen/file.o fmgen/fmtimer.o \
+	fmgen/opm.o fmgen/opna.o fmgen/psg.o \
+	x11/winx68k.o
+
+OBJS = $(COBJS) $(CXXOBJS)
+
+CSRCS = $(COBJS:.o=.c)
+CXXSRCS = $(CXXOBJS:.o=.cpp)
+SRCS = $(CSRCS) $(CXXSRCS)
+
+# ============================================================================
+# Build Rules
+# ============================================================================
+
+.SUFFIXES: .c .cpp
+
+.c.o:
+	$(CC) -o $@ $(CFLAGS) -c $<
+
+.cpp.o:
+	$(CXX) -o $@ $(CXXFLAGS) -c $<
+
+all: px68k
+
+px68k: $(OBJS)
+	$(RM) $@
+	$(CXXLINK) $(MOPT) -o $@ $(CXXLDOPTIONS) $(OBJS) $(SDL_LIB) $(LDLIBS)
+	@echo "Build complete: ./px68k"
+
+depend:
+	$(DEPEND) -- $(CXXFLAGS) -- $(SRCS)
+
+clean:
+	$(RM) px68k $(OBJS)
+	$(RM) *.CKP *.ln *.BAK *.bak *.o core errs ,* *~ *.a .emacs_* tags TAGS make.log MakeOut "#"*
+
+tags:
+	find . -name "*.h" -o -name "*.c" -o -name "*.cpp" | $(TAGS) -
+
+# ============================================================================
+# Install (optional)
+# ============================================================================
+PREFIX ?= /usr/local
+
+install: px68k
+	install -d $(DESTDIR)$(PREFIX)/bin
+	install -m 755 px68k $(DESTDIR)$(PREFIX)/bin/
+	install -d $(DESTDIR)$(PREFIX)/share/doc/px68k
+	install -m 644 readme.txt develop.txt $(DESTDIR)$(PREFIX)/share/doc/px68k/ 2>/dev/null || true
+
+.PHONY: all clean depend tags install
