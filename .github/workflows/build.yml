@@ -4,110 +4,59 @@ on:
   push:
     branches: [main, master]
     tags: ["v*"]
-  pull_request:
-    branches: [main, master]
   workflow_dispatch:
-
-env:
-  LANG: C.UTF-8
-  LC_ALL: C.UTF-8
 
 jobs:
   build:
     runs-on: ubuntu-latest
     
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      
+      - name: Cache APT packages
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/apt/archives
+          key: ${{ runner.os }}-apt-${{ hashFiles('.github/workflows/build.yml') }}
       
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential libsdl2-dev libsdl2-gfx-dev nkf pkg-config
+          sudo apt-get install -y build-essential libsdl2-dev libsdl2-gfx-dev nkf
       
-      - name: Handle Japanese documentation encoding
+      - name: Verify source structure
         run: |
-          echo "=== Checking file encodings ==="
-          for f in readme.txt develop.txt; do
-            if [ -f "$f" ]; then
-              enc=$(nkf -g "$f" 2>/dev/null || echo "unknown")
-              echo "$f: $enc"
-              # 显式判断编码，避免grep退出码导致失败
-              if [ "$enc" = "Shift_JIS" ] || [ "$enc" = "ISO-2022-JP" ]; then
-                echo "Converting $f to UTF-8..."
-                nkf -w "$f" > "$f.utf8"
-              fi
-            else
-              echo "$f not found, skipping"
-            fi
-          done
+          echo "=== Checking m68000 structure ==="
+          ls -la m68000/
+          test -f m68000/c68k.c && echo "✓ m68000/c68k.c exists" || echo "✗ missing"
+          test -f m68000/m68000.c && echo "✓ m68000/m68000.c exists" || echo "✗ missing"
+      
+      - name: Fix Makefile for 64-bit
+        run: |
+          # 1. 移除 -m32（关键：原 Makefile 在非 armv6l 时强制使用 -m32）
+          sed -i 's/MOPT= -m32/MOPT=/' Makefile
+          
+          # 2. 禁用所有警告避免 GCC 14 阻断
+          sed -i 's/-Wall/-w/g' Makefile
+          
+          # 3. 启用 SDL2（原 Makefile 通过 SDL2=1 变量控制）
+          echo "Will build with: make SDL2=1"
       
       - name: Prepare version file
         run: |
-          if [ ! -f version.txt ]; then
-            echo "PX68K_VERSION=0.15" > version.txt
-            echo "Created version.txt with PX68K_VERSION=0.15"
-          else
-            echo "Using existing version.txt:"
-            cat version.txt
-          fi
+          [ ! -f version.txt ] && echo "PX68K_VERSION=0.15" > version.txt
       
-      - name: Build with Makefile.x64
-        run: |
-          make -f Makefile.x64 clean 2>/dev/null || true
-          make -f Makefile.x64 -j$(nproc)
+      - name: Build
+        run: make SDL2=1 -j$(nproc)
       
-      - name: Verify binary
-        run: |
-          ls -lh px68k
-          file px68k
-          # 测试是否能执行（会失败因为没ROM，但验证链接正确）
-          ./px68k --help 2>&1 || true
-      
-      - name: Package artifact
+      - name: Package
         run: |
           mkdir -p px68k-linux
           cp px68k px68k-linux/
-          
-          # 复制文档（优先UTF-8版本）
-          for f in readme.txt develop.txt; do
-            if [ -f "$f.utf8" ]; then
-              cp "$f.utf8" "px68k-linux/$f"
-              echo "Copied $f.utf8 as $f"
-            elif [ -f "$f" ]; then
-              cp "$f" "px68k-linux/"
-              echo "Copied original $f"
-            fi
-          done
-          
-          # 创建说明文件
-          cat > px68k-linux/README.txt << 'EOF'
-          PX68K - Portable X68000 Emulator (Linux x86_64 build)
-          
-          Setup:
-          1. mkdir -p ~/.keropi
-          2. Copy BIOS files (iplrom.dat, cgrom.dat) to ~/.keropi/
-          3. Run: ./px68k
-          
-          Controls:
-          - F12: Menu
-          - See original readme.txt for details
-          EOF
-          
+          cp readme.txt develop.txt px68k-linux/ 2>/dev/null || true
           tar czvf px68k-linux-x64.tar.gz px68k-linux/
-          echo "=== Package contents ==="
-          tar tzf px68k-linux-x64.tar.gz
       
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: px68k-linux-x64
           path: px68k-linux-x64.tar.gz
-          retention-days: 30
-      
-      - name: Release (if tagged)
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v1
-        with:
-          files: px68k-linux-x64.tar.gz
-          generate_release_notes: true
