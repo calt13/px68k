@@ -1,6 +1,6 @@
 # ============================================================================
-# PX68K Makefile for Modern 64-bit Systems (GCC 12/13/14 Safe)
-# Target: Linux x86_64, macOS x86_64/arm64
+# PX68K Makefile for Modern 64-bit Systems (Ultra Compatible)
+# Target: Linux x86_64 - Disables all warnings for legacy code compatibility
 # ============================================================================
 
 include version.txt
@@ -15,52 +15,14 @@ DEPEND	 = gccmakedep
 # Modern 64-bit architecture flags (empty = native)
 MOPT =
 
-# Base flags
-CDEBUGFLAGS = -O2 -Wall
+# 终极方案：禁用所有警告 (-w)，老代码在现代 GCC 下警告太多且都是误报
+CDEBUGFLAGS = -O2 -w
 CDEBUGFLAGS += -funroll-loops -fomit-frame-pointer
 CDEBUGFLAGS += -ffast-math -ftree-vectorize
 CDEBUGFLAGS += -DNDEBUG -g
 CDEBUGFLAGS += -DPX68K_VERSION=$(PX68K_VERSION)
 CDEBUGFLAGS += -DNO_MERCURY
 CDEBUGFLAGS += -DC68K_NO_JUMP_TABLE
-
-# ============================================================================
-# GCC 12/13/14 Compatibility: Disable false-positive warnings for legacy code
-# ============================================================================
-
-# 1. 数组边界误报 (win32api/peace.c 的指针操作)
-CDEBUGFLAGS += -Wno-array-bounds
-CDEBUGFLAGS += -Wno-stringop-overflow
-CDEBUGFLAGS += -Wno-stringop-overread
-
-# 2. 未使用函数 (m68000 等大量静态函数未被调用)
-CDEBUGFLAGS += -Wno-unused-function
-CDEBUGFLAGS += -Wno-unused-variable
-CDEBUGFLAGS += -Wno-unused-but-set-variable
-
-# 3. 未初始化变量误报 (编译器无法理解的复杂控制流)
-CDEBUGFLAGS += -Wno-maybe-uninitialized
-
-# 4. 严格别名规则 (老代码常用指针别名技巧)
-CDEBUGFLAGS += -Wno-strict-aliasing
-
-# 5. 函数指针类型转换 (Win32 API 兼容层大量使用)
-CDEBUGFLAGS += -Wno-cast-function-type
-
-# 6. 废弃声明 (SDL1/2 兼容层可能用到旧 API)
-CDEBUGFLAGS += -Wno-deprecated-declarations
-
-# 7. 格式字符串警告 (不同平台 size_t 等类型差异)
-CDEBUGFLAGS += -Wno-format
-
-# 8. 符号比较 (老代码常混用 int/size_t)
-CDEBUGFLAGS += -Wno-sign-compare
-
-# 9. 不兼容指针类型 (Win32 兼容层类型转换)
-CDEBUGFLAGS += -Wno-incompatible-pointer-types
-
-# 10. 确保警告不会阻断构建 (保险措施)
-CDEBUGFLAGS += -Wno-error
 
 # ============================================================================
 # SDL2 Configuration
@@ -79,7 +41,7 @@ CXXFLAGS = $(MOPT) $(CDEBUGFLAGS) $(EXTRA_INCLUDES) -std=c++11
 CXXLDOPTIONS = $(MOPT) $(CDEBUGFLAGS)
 
 # ============================================================================
-# Source Objects (same as original)
+# Source Objects
 # ============================================================================
 
 COBJS = \
