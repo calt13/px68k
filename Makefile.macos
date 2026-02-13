@@ -1,0 +1,230 @@
+# ============================================================================
+# PX68K Modern macOS Makefile
+# 适用于 Apple Silicon (M1/M2/M3) 和 Intel Mac
+# 特性: 自动架构检测、自动 SDL2 路径发现、宽松的版本要求
+# 用法: make -f Makefile.macos SDL2=1
+# ============================================================================
+
+# 颜色定义
+COLOR_RESET  := \033[0m
+COLOR_GREEN  := \033[32m
+COLOR_YELLOW := \033[33m
+COLOR_RED    := \033[31m
+COLOR_BLUE   := \033[34m
+COLOR_BOLD   := \033[1m
+
+# 版本定义 (兼容原 Makefile)
+include version.txt
+
+# 编译器设置 (macOS 默认使用 Clang)
+CC      := clang
+CXX     := clang++
+CXXLINK := $(CXX)
+RM      := rm -f
+
+# ============================================================================
+# 平台检测与适配 (关键改进部分)
+# ============================================================================
+UNAME_S := $(shell uname -s)
+UNAME_M := $(shell uname -m)
+
+ifeq ($(UNAME_S),Darwin)
+    IS_MACOS := 1
+    
+    # 架构检测与标志设置 (移除 -m32，改用 -arch)
+    ifeq ($(UNAME_M),arm64)
+        ARCH_FLAGS := -arch arm64
+        HOMEBREW_PREFIX ?= /opt/homebrew
+        $(info $(COLOR_BLUE)● 检测到 Apple Silicon (ARM64)$(COLOR_RESET))
+    else ifeq ($(UNAME_M),x86_64)
+        ARCH_FLAGS := -arch x86_64
+        HOMEBREW_PREFIX ?= /usr/local
+        $(info $(COLOR_BLUE)● 检测到 Intel Mac (x86_64)$(COLOR_RESET))
+    else
+        ARCH_FLAGS := 
+        HOMEBREW_PREFIX ?= /usr/local
+        $(warning $(COLOR_YELLOW)未预料的架构: $(UNAME_M)，尝试默认设置$(COLOR_RESET))
+    endif
+else
+    $(error 此 Makefile 专为 macOS 设计。其他系统请使用原 Makefile)
+endif
+
+# ============================================================================
+# SDL2 自动发现 (宽松版本检查)
+# ============================================================================
+
+# 候选路径 (M1 Homebrew, Intel Homebrew, MacPorts, 环境变量)
+SDL_CONFIG_CANDIDATES := \
+    $(SDL_CONFIG) \
+    $(HOMEBREW_PREFIX)/bin/sdl2-config \
+    /usr/local/bin/sdl2-config \
+    /opt/local/bin/sdl2-config \
+    $(shell which sdl2-config 2>/dev/null)
+
+# 找到第一个可用的 sdl2-config
+SDL_CONFIG_VALID := $(firstword $(foreach candidate,$(SDL_CONFIG_CANDIDATES),$(shell test -x $(candidate) && echo $(candidate) && break)))
+
+ifeq ($(SDL_CONFIG_VALID),)
+    $(error $(COLOR_RED)✗ 未找到 SDL2。请运行: brew install sdl2$(COLOR_RESET))
+else
+    SDL_CONFIG := $(SDL_CONFIG_VALID)
+    SDL_VERSION := $(shell $(SDL_CONFIG) --version 2>/dev/null || echo "未知")
+    $(info $(COLOR_GREEN)✓ 找到 SDL2 ($(SDL_VERSION))$(COLOR_RESET))
+    $(info $(COLOR_GREEN)  路径: $(SDL_CONFIG)$(COLOR_RESET))
+endif
+
+# 获取 SDL2 编译参数
+SDL_CFLAGS := $(shell $(SDL_CONFIG) --cflags)
+SDL_LIBS   := $(shell $(SDL_CONFIG) --libs)
+
+# SDL2 模式下的额外检查 (develop.txt 要求 SDL2_gfx)
+ifdef SDL2
+    $(info $(COLOR_BLUE)● SDL2 模式启用$(COLOR_RESET))
+    
+    # 尝试找到 SDL2_gfx (不强制版本，存在即可)
+    SDL_GFX_PATHS := \
+        $(HOMEBREW_PREFIX)/lib/libSDL2_gfx.dylib \
+        /usr/local/lib/libSDL2_gfx.dylib \
+        /opt/local/lib/libSDL2_gfx.dylib
+    
+    SDL_GFX_FOUND := $(firstword $(foreach path,$(SDL_GFX_PATHS),$(shell test -f $(path) && echo $(path))))
+    
+    ifneq ($(SDL_GFX_FOUND),)
+        SDL_LIBS += -lSDL2_gfx
+        # 确保能找到头文件 (某些 Homebrew 安装可能需要显式包含路径)
+        SDL_CFLAGS += -I$(HOMEBREW_PREFIX)/include
+        $(info $(COLOR_GREEN)✓ 找到 SDL2_gfx$(COLOR_RESET))
+    else
+        $(warning $(COLOR_YELLOW)⚠ 未找到 SDL2_gfx 库。如编译链接失败，请运行: brew install sdl2_gfx$(COLOR_RESET))
+    endif
+else
+    $(info $(COLOR_YELLOW)● SDL1.2 模式 (legacy)$(COLOR_RESET))
+    # SDL1.2 模式通常不需要额外 gfx 库
+endif
+
+# ============================================================================
+# 编译标志 (针对 macOS 优化)
+# ============================================================================
+
+# 基础优化标志 (移除 -m32，使用 $(ARCH_FLAGS))
+CDEBUGFLAGS := -O2 -Wall $(ARCH_FLAGS)
+CDEBUGFLAGS += -funroll-loops -fomit-frame-pointer
+CDEBUGFLAGS += -ffast-math -ftree-vectorize
+CDEBUGFLAGS += -DNDEBUG
+CDEBUGFLAGS += -DPX68K_VERSION=$(PX68K_VERSION)
+
+# 架构特定优化
+ifeq ($(UNAME_M),arm64)
+    # Apple Silicon 特定优化 (NEON 等)
+    CDEBUGFLAGS += -ftree-vectorize
+    # 注意: 不强制 -mcpu 标志，让 Clang 自动选择最佳 ARM 特性
+else
+    # Intel 特定 (可选 SSE 优化，但 macOS 默认通常已很好)
+    # CDEBUGFLAGS += -msse4.2
+endif
+
+# 特性开关 (保持与原 Makefile 兼容)
+CDEBUGFLAGS += -DNO_MERCURY      # 禁用 mercury 单元 (根据原 Makefile)
+CDEBUGFLAGS += -DC68K_NO_JUMP_TABLE
+
+# 包含路径
+EXTRA_INCLUDES := -I./x11 -I./x68k -I./fmgen -I./win32api $(SDL_CFLAGS)
+
+CFLAGS      := $(CDEBUGFLAGS) $(EXTRA_INCLUDES)
+CXXFLAGS    := $(CFLAGS) -std=c++11
+CXXLDOPTIONS:= $(CDEBUGFLAGS)
+
+# 链接库
+LDLIBS := -lm -framework Cocoa -framework IOKit  # macOS 常见框架
+
+# ============================================================================
+# 源文件列表 (保持与原 Makefile 完全一致)
+# ============================================================================
+
+COBJS := \
+    x68k/d68k.o \
+    x68k/adpcm.o x68k/bg.o x68k/crtc.o x68k/dmac.o x68k/fdc.o x68k/fdd.o \
+    x68k/disk_d88.o x68k/disk_dim.o x68k/disk_xdf.o x68k/gvram.o x68k/ioc.o \
+    x68k/irqh.o x68k/mem_wrap.o x68k/mercury.o x68k/mfp.o x68k/palette.o \
+    x68k/midi.o x68k/pia.o x68k/rtc.o x68k/sasi.o x68k/scc.o x68k/scsi.o \
+    x68k/sram.o x68k/sysport.o x68k/tvram.o \
+    x11/joystick.o x11/juliet.o x11/keyboard.o x11/mouse.o x11/prop.o \
+    x11/status.o x11/timer.o x11/dswin.o x11/windraw.o x11/winui.o x11/about.o x11/common.o \
+    win32api/dosio.o win32api/fake.o win32api/peace.o
+
+CXXOBJS := \
+    fmgen/fmgen.o fmgen/fmg_wrap.o fmgen/file.o fmgen/fmtimer.o \
+    fmgen/opm.o fmgen/opna.o fmgen/psg.o \
+    x11/winx68k.o
+
+CPUOBJS := \
+    x68k/d68k.o m68000/m68000.o \
+    m68000/c68k/c68k.o m68000/c68k/c68kexec.o
+
+OBJS := $(COBJS) $(CXXOBJS) $(CPUOBJS)
+
+# 注意: 这里假设使用 C68K 核心 (纯 C)，如需 Cyclone ASM 核心需额外配置
+# 如需启用 Cyclone: make -f Makefile.macos SDL2=1 USE_CYCLONE=1
+ifdef USE_CYCLONE
+    CPUOBJS := x68k/d68k.o m68000/m68000.o m68000/cyclone.o
+    CDEBUGFLAGS += -DCYCLONE
+    $(info $(COLOR_YELLOW)● 使用 Cyclone ASM 核心 (需手动确保 ARM64 兼容)$(COLOR_RESET))
+endif
+
+# ============================================================================
+# 构建规则
+# ============================================================================
+
+.PHONY: all clean check info
+
+all: check px68k
+
+# 环境检查目标
+check:
+	@echo "$(COLOR_BOLD)构建配置摘要:$(COLOR_RESET)"
+	@echo "  架构: $(UNAME_M) $(ARCH_FLAGS)"
+	@echo "  SDL2: $(SDL_VERSION) ($(SDL_CONFIG))"
+	@echo "  模式: $(if $(SDL2),SDL2,SDL1.2)"
+	@echo ""
+
+# 主目标
+px68k: $(OBJS)
+	@echo "$(COLOR_GREEN)→ 链接 $@$(COLOR_RESET)"
+	$(CXXLINK) $(ARCH_FLAGS) -o $@ $(OBJS) $(SDL_LIBS) $(LDLIBS) $(CXXLDOPTIONS)
+	@echo "$(COLOR_GREEN)✓ 构建成功: ./px68k$(COLOR_RESET)"
+	@if [ "$(UNAME_M)" = "arm64" ]; then \
+		echo "$(COLOR_YELLOW)提示: M1/M2/M3 原生构建完成。如需运行，请确保 ROM 文件已放置在 ~/.keropi/$(COLOR_RESET)"; \
+	fi
+
+# 编译规则
+.c.o:
+	@echo "$(COLOR_BLUE)  CC $<$(COLOR_RESET)"
+	@$(CC) $(CFLAGS) -c $< -o $@
+
+.cpp.o:
+	@echo "$(COLOR_BLUE)  CXX $<$(COLOR_RESET)"
+	@$(CXX) $(CXXFLAGS) -c $< -o $@
+
+clean:
+	$(RM) px68k $(OBJS)
+	@echo "$(COLOR_GREEN)✓ 清理完成$(COLOR_RESET)"
+
+# 帮助信息
+help:
+	@echo "$(COLOR_BOLD)PX68K macOS 构建帮助$(COLOR_RESET)"
+	@echo ""
+	@echo "用法: make -f Makefile.macos [选项] [目标]"
+	@echo ""
+	@echo "选项:"
+	@echo "  SDL2=1        使用 SDL2 (推荐，需要 brew install sdl2 sdl2_gfx)"
+	@echo "  USE_CYCLONE=1 启用 Cyclone ASM CPU 核心 (实验性)"
+	@echo ""
+	@echo "目标:"
+	@echo "  all       构建 px68k (默认)"
+	@echo "  clean     清理构建产物"
+	@echo "  check     显示环境检测信息"
+	@echo "  help      显示此帮助"
+	@echo ""
+	@echo "示例:"
+	@echo "  make -f Makefile.macos SDL2=1          # M1/M2 标准构建"
+	@echo "  make -f Makefile.macos SDL2=1 -j4      # 并行编译"
