@@ -13,13 +13,19 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libsdl2-dev libsdl2-gfx-dev
       
-      - name: Fix Makefile (2行sed)
+      - name: Fix (4行sed)
         run: |
-          # 1. 移除 -m32（支持64位）
+          # 1. 修改 windows.h：给 max 宏加上 NOMINMAX 保护
+          sed -i '/#define max(a,b)/i #ifndef NOMINMAX' win32api/windows.h
+          
+          # 2. 修改 windows.h：给 min 宏加上 #endif（闭合上面的 #ifndef）
+          sed -i '/#define min(a,b)/a #endif' win32api/windows.h
+          
+          # 3. Makefile 移除 -m32
           sed -i 's/MOPT= -m32/MOPT=/' Makefile
           
-          # 2. GCC 14兼容（解决windraw.c指针转换错误）
-          sed -i 's/CDEBUGFLAGS = -g -O0 -fno-strict-aliasing/CDEBUGFLAGS = -g -O0 -fno-strict-aliasing -fpermissive -Wno-error -Wno-format-security -Wno-int-conversion -Wno-incompatible-pointer-types/' Makefile
+          # 4. Makefile 添加 -DNOMINMAX 和 GCC 14 宽容选项
+          sed -i 's/CDEBUGFLAGS = -g -O0 -fno-strict-aliasing/CDEBUGFLAGS = -g -O0 -fno-strict-aliasing -fpermissive -Wno-error -DNOMINMAX/' Makefile
       
       - name: Build
         run: make SDL2=1
@@ -29,20 +35,7 @@ jobs:
         with:
           name: px68k-linux-x64
           path: px68k
-
-  build-macos:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install dependencies
-        run: brew install sdl2 sdl2_gfx
-      
-      - name: Fix Makefile (macOS版，只有sed -i区别)
-        run: |
-          sed -i '' 's/MOPT= -m32/MOPT=/' Makefile
-          sed -i '' 's/CDEBUGFLAGS = -g -O0 -fno-strict-aliasing/CDEBUGFLAGS = -g -O0 -fno-strict-aliasing -fpermissive -Wno-error -Wno-format-security -Wno-int-conversion -Wno-incompatible-pointer-types/' Makefile
-      
+   
       - name: Build
         run: make SDL2=1
       
